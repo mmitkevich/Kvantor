@@ -59,6 +59,7 @@
   <ItemGroup>
     <None Include="packages.config" />
     <None Include="FmatDoc.chm" />
+    <None Include="positions.transaq" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Kvant\Kvant.fsproj">
