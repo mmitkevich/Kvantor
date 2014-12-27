@@ -29,21 +29,24 @@ let inline CDF(x:Adj) : Adj =
 // r: risk free interest rate
 // v: volatility
 
-let blackScholesVanilla (vanillaKind:VanillaKind) (strike:float) (args:Adj[]) =
+let blackScholes (vanillaKind:VanillaKind) (strike:float) (args:Adj[]) =
     let (spot, t, r, vol) = (args.[0],args.[1],args.[2],args.[3])
     let d1=(log(spot / strike) + (r+vol*vol/2.0)*t)/(vol*sqrt(t))
     let d2=d1-vol*sqrt(t)
-    match vanillaKind  with
-    | Call -> spot*CDF(d1) - strike*exp(-r*t)*CDF(d2)
-    | Put -> -spot*CDF(-d1) + strike*exp(-r*t)*CDF(-d2)
 
-type Greeks(args:float array) = 
-    member this.values  = args
-    member this.delta   = this.values.[0]   // 'spot
-    member this.theta   = this.values.[1]   // ''spot
-    member this.rho     = this.values.[2]   // 'time to maturity
-    member this.vega    = this.values.[3]   // 'volatility
-    override this.ToString() = sprintf "{delta = %A; theta = %A; rho = %A; vega = %A}" this.delta  this.theta this.rho this.vega
+    let result = 
+        match vanillaKind  with
+        | Call -> spot*CDF(d1) - strike*exp(-r*t)*CDF(d2)
+        | Put -> -spot*CDF(-d1) + strike*exp(-r*t)*CDF(-d2)
+        | Future ->  spot*exp(r*t)
+
+    result
+
+let future (args:Adj[]) = 
+    let (spot,t,r) = (args.[0],args.[1],args.[2])
+    spot*exp(r*t)
+
+type Greeks = Greeks of Matrix
  
 let matrixAsArray (m:Matrix) = 
     match m.Data with
@@ -51,12 +54,28 @@ let matrixAsArray (m:Matrix) =
 
 let valuesArray (bs:BehaviorSubject<'a> array):('a array)  =  Array.map (fun (b:BehaviorSubject<'a>) -> b.Value) bs
 
-let price (asset:Asset) = 
+let price (asset:Asset):Matrix  = 
     match asset.kind with
-    | VanillaOption -> 
-            let (price,greeks) = grad' (blackScholesVanilla asset.vanillaKind asset.strike) (valuesArray [|asset.spot; asset.maturity; asset.rate; asset.volatility|])
-            (price, Greeks(greeks))
-    | _ -> 
-            invalidOp (sprintf "%A pricing not supported" asset.kind)
+    | Vanilla -> 
+        match asset.vanillaKind with
+        | None -> invalidOp "vanillaKind should be specified"
+        | Some vk -> 
+            match vk with
+            | Call | Put ->
+                let (price,greeks) = grad' (blackScholes vk asset.strike) [|asset.spot.Value; max asset.maturity.Value 1e-5; Option.get(asset.underlying).rate.Value; asset.volatility.Value|]
+                Matrix (Array.append [|price|] greeks)
+            | Future -> 
+                let (price,greeks) = grad' future (valuesArray [|asset.spot; asset.maturity; Option.get(asset.underlying).rate|])
+                Matrix (Array.append ((Array.append [|price|] greeks)) [|0.|])
+    | _ -> invalidOp (sprintf "%A pricing not supported" asset.kind)
 
  
+let value (arr:Matrix) = arr.[0]
+let delta (arr:Matrix) = arr.[1]
+let theta (arr:Matrix) = arr.[2]
+let rho (arr:Matrix)   = arr.[3]
+let vega (arr:Matrix)  = arr.[4]
+
+let printGreeks m = 
+    sprintf "value = %12.2f | delta = %12.3f | theta = %12.2f | vega = %12.2f" (value m) (delta m) (theta m) (vega m)
+

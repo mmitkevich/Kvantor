@@ -1,50 +1,72 @@
 ﻿open System
 open Kvant
+open Fmat.Numerics
 
 type Position = float*Asset
-let now = DateTime.Now
 let rate = 0.1
-let volatility = 0.5
-let expirations = [|DateTime(2015,1,15); DateTime(2015,3,16)|]
+let debug = false //true
 
-let futpos =  15.
-let call und strike iexp now = Asset.VanillaOption(und, Call, strike, maturity = Calendar.Russia.maturity now expirations.[iexp], rate=rate, volatility=volatility)
-let put und strike iexp now = Asset.VanillaOption(und, Put, strike, maturity = Calendar.Russia.maturity now expirations.[iexp], rate=rate, volatility=volatility)
+let future und ex now = Asset.Vanilla(und, Future, 1., maturity = Calendar.Russia.maturity now ex, rate=rate)
 
-let calc spot = 
-    let rub = Asset.Currency("RUB")
-    let usd_rub = Asset.Spot(rub, "USD_RUB", price=spot)
-    let usd_rub_fut = Asset.Future(usd_rub)
-    let portfolio now = [
-        (5.,    call    usd_rub 60000.     1    now);
-        (10.,   put     usd_rub 60000.     0    now);
-        (10.,   call    usd_rub 70000.     1    now);
-        (12.,   put     usd_rub 67000.     0    now);
-        (4.,    put     usd_rub 70000.     1    now);
-        (10.,   call    usd_rub 60000.     0    now);
-        (5.,    call    usd_rub 65000.     0    now);
-        (1.,    call    usd_rub 55000.     1    now);
-        (-5.,   put     usd_rub 50000.     1    now);
-        (16.,   put     usd_rub 55000.     0    now);
-        (8.,    put     usd_rub 70000.     0    now);
-        ]
+let call und strike ex volatility now = Asset.Vanilla(und, Call, strike, maturity = Calendar.Russia.maturity now ex, rate=rate, volatility=volatility)
+let put und strike ex volatility now = Asset.Vanilla(und, Put, strike, maturity = Calendar.Russia.maturity now ex, rate=rate, volatility=volatility)
+let valueAndGreeks m = 
+    sprintf "%12g | %12.3f | %12.2f | %12.2f" (BlackScholes.value m) (BlackScholes.delta m) (-(BlackScholes.theta m)/365.) ((BlackScholes.vega m)/100.)
 
-    let delta (pf:Position list) = 
-        let total = pf |> List.sumBy (fun pos -> 
-            let (amount,asset) = pos
-            let (price,greeks) = BlackScholes.price asset
-            //printfn "%A * %A\t %A\t %A\t %A\t %A" amount asset.vanillaKind asset.strike asset.maturity.Value price greeks
-            amount*greeks.delta)
-        total
-    
-    delta (portfolio now)
+let price portfolio (asset:float->Asset) spot volatility now = 
+    let pf  = portfolio (asset spot) volatility now
+    if debug then printfn "%12s | %12s | %12s | %12s | %12s | %12s | %12s | %12s" "pos" "kind" "strike" "time" "value" "delta" "theta" "vega"
+    let folder = fun sum pos -> 
+        let (amount,asset) = pos
+        let m = BlackScholes.price asset
+        if debug then printfn "%12g | %12s | %12g | %12g | %s" amount (sprintf "%A" asset.vanillaKind) asset.strike (365.*asset.maturity.Value) (valueAndGreeks m)
+        sum + m
+    pf |> List.fold folder (Matrix.zeros [1;5] )
+
+
+let expn n  = 
+    match n with
+    | 1 -> DateTime(2015,1,15)
+    | 2 -> DateTime(2015,2,15)
+    | 3 -> DateTime(2015,3,16)
+    | _ -> invalidOp "unknown expiration index"
+
+let rub = Asset.Currency("RUB")
+let usdrub spot = Asset.Spot(rub,"USD_RUB", price=spot)
 
 
 [<EntryPoint>]
 let main argv = 
-    [45000.; 50000.; 53000.; 55000.; 57000.; 58000.; 59000.; 60000.; 65000.; 70000.; 75000.] |> List.iter(fun s ->
-        let deltaOpt = calc s 
-        printfn "%A \t\t delta (options) = %A\t\t  (futures) = %A\t\t  (total) %A" s deltaOpt futpos (deltaOpt+futpos)
-        )
-    
+    let portfolio (s:Asset) volatility now  = 
+        [   (5.,    call    s  60000.     (expn 3)    volatility   now);
+            (10.,   put     s  60000.     (expn 1)    volatility   now);
+            (10.,   call    s  70000.     (expn 3)    volatility   now);
+            (12.,   put     s  67000.     (expn 1)    volatility   now);
+            (4.,    put     s  70000.     (expn 3)    volatility   now);
+            (10.,   call    s  60000.     (expn 1)    volatility   now);
+            (5.,    call    s  65000.     (expn 1)    volatility   now);
+            (1.,    call    s  55000.     (expn 3)    volatility   now);
+            (-5.,   put     s  50000.     (expn 3)    volatility   now);
+            (16.,   put     s  55000.     (expn 1)    volatility   now);
+            (8.,    put     s  70000.     (expn 1)    volatility   now);
+            (15.,   future  s             (expn 3)                 now);
+        ]
+
+    let report spot volatility (now:DateTime) = 
+        printfn "\ndate = %12s | spot = %12g | volatility = %12g" (now.Date.ToShortDateString()) spot volatility
+        let m = price portfolio usdrub spot volatility now 
+        printfn "%12s | %12s | %12s | %12s" "value" "delta" "theta" "vega"
+        printfn "%s" (valueAndGreeks m)
+
+    let iterate spots volatilities now = 
+        volatilities |> List.iter(fun volatility->
+            spots |> List.iter(fun spot -> report spot volatility now)|>ignore
+            )
+
+    //let vols = [0.2; 0.5; 0.8]
+    let vols = [0.4]
+    let spots = [30000.; 50000.; 58000.; 60000.; 63000.; 100000.]
+    //let spots = [60000.]
+
+    iterate  spots vols (DateTime(2015,3,15))
     0

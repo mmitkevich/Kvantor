@@ -7,7 +7,7 @@ let holidays = [
         ; (1,5)
     ]
 
-let expirationDate year month =
+let expirationYYMM year month =
      match month with
      | 1-> DateTime(year,month,15)
      | 2-> DateTime(year,month,15)
